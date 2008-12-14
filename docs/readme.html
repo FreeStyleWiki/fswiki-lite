@@ -1,0 +1,114 @@
+<html>
+<head>
+  <title>README</title>
+  <link rel="stylesheet" type="text/css" href="default.css">
+</head>
+<body>
+<h2>FSWikiLiteとは？</h2>
+<p>FSWikiLiteの元になっているFreeStyleWikiはPerlによるmodulableなWikiクローンです。プラグインによって様々な機能を追加することができます。ただし、高機能な分、通常のCGIスクリプトと比較すると動作が重いという欠点がありました。</p><p>FSWikiLiteはFSWikiほど高機能ではありませんが、機能を限定することで軽快に動作します。プラグインは一部しか使用できませんが、文法はFSWikiと完全互換です。また、FSWikiと比べると構造がシンプルな分、設置も容易です。</p><p>その他にFSWikiLiteは以下のような特徴があります。</p><ul>
+<li>tDiaryのテーマを使用可能。
+</li>
+<li>サイドバーやヘッダ、フッタを表示可能。
+</li>
+<li>FSWikiとは異なるシンプルなプラグイン機構を備えている。
+</li>
+<li>.htaccessを使用することで編集を管理人のみに限定することが可能。
+</li>
+<li>ページのカテゴライズが可能。
+</li>
+<li>ファイルの添付が可能。
+</li>
+<li>PDF生成、キーワードリンク、InterWikiなどは使用不可。
+</li>
+</ul><h2>インストール</h2>
+<p>lib/setup.plを編集し、各自の設定を行います。</p><ul>
+<li>$DATA_DIR - データファイルの格納場所。
+</li>
+<li>$BACKUP_DIR - バックアップファイルの格納場所。
+</li>
+<li>$ATTACH_DIR - 添付ファイルの格納場所。
+</li>
+<li>$THEME_URL - テーマ（CSS）の場所。
+</li>
+<li>$SEND_MAIL - sendmailのパス。更新通知を受け取る場合は設定してください。
+</li>
+<li>$ADMIN_MAIL- 管理者のメールアドレス。更新通知を受け取る場合は設定してください。
+</li>
+<li>$WIKI_NAME - WikiNameを使用する場合は1、使用しない場合は0を指定してください。
+</li>
+<li>$MAIN_SCRIPT - メインスクリプトのファイル名。変更しなくてもいいです。
+</li>
+<li>$EDIT_SCRIPT - 編集用スクリプトのファイル名。変更しなくてもいいです。
+</li>
+<li>$DOWNLOAD_SCRIPT - 添付ファイルのダウンロード用スクリプトのファイル名。変更しなくてもいいです。
+</li>
+<li>$CATEGORY_SCRIPT - カテゴリ表示用スクリプトのファイル名。変更しなくてもいいです。
+</li>
+<li>$SITE_TITLE - サイト名。自由に変更してください。
+</li>
+<li>$VERSION - FSWikiLiteのバージョン。変更しなくてもいいです。
+</li>
+<li>$SITE_URL - FSWiki公式サイトのURL。変更しなくてもいいです。
+</li>
+</ul><p>FTPなどで以下のようにファイルを配置します（デフォルトの設定の場合）。</p><pre>-+- wiki.cgi
+ |
+ +- edit.cgi
+ |
+ +- category.cgi
+ |
+ +- download.cgi
+ |
+ +- /lib （ライブラリを配置します）
+ |   |
+ |   +- jcode.pl
+ |   |
+ |   +- cgi-lib.pl
+ |   |
+ |   +- setup.pl
+ |   |
+ |   +- common.pl
+ |   |
+ |   +- mimew.pl
+ |
+ +- /plugin （プラグインを配置します）
+ |   |
+ |   +- core.pl
+ |
+ +- /data （ページデータが出力されます）
+ |
+ +- /backup （バックアップファイルが出力されます）
+ |
+ +- /attach（添付ファイルが出力されます）
+ |
+ +-/theme （テーマを配置します）
+    |
+    +- /default
+        |
+        +- default.css
+</pre><p>wiki.cgi、edit.cgi、category.cgi、download.cgiのパーミッションをCGIとして実行可能なように設定します。また、dataディレクトリ、backupディレクトリ、attachディレクトリはCGIから書き込み可能なパーミッションに設定します。なお、ディレクトリ構成に関してはsetup.plを編集することで任意の構造に変更することができます。</p><p>テーマに関しては現在のFSWikiLiteの配布アーカイブには同梱されていません。FSWikiのディストリビューションや、tDiaryのWebサイトよりお好みのテーマを取得してください。</p><h2>編集を管理者に限定する</h2>
+<p>.htaccessを使ってedit.cgiにアクセス制限をかけます。詳細についてはそのうち。</p><h2>使用可能なプラグイン</h2>
+<h3>recent</h3>
+<p>更新日時順にページ名の一覧を出力します。引数で表示件数を指定できます。表示件数を省略すると全件出力します。</p><pre>{{recent 10}}
+</pre><h3>recentdays</h3>
+<p>日付ごとに更新されたページを一覧表示します。引数で表示日数を指定できます。表示日数を省略すると最新の５日分を出力します。</p><pre>{{recentdays 10}}
+</pre><h3>lastmodified</h3>
+<p>ページの最終更新日時を表示します。</p><pre>{{lastmodified}}
+</pre><h3>category</h3>
+<p>ページをカテゴライズするためのプラグインです。引数にカテゴリ名を指定します。</p><pre>{{category カテゴリ名}}
+</pre><h3>category_list</h3>
+<p>カテゴリごとのページ一覧を表示します。</p><pre>{{category_list}}
+</pre><p>引数として表示するカテゴリを指定することもできます。</p><pre>{{category_list カテゴリ名}}
+</pre><h3>ref</h3>
+<p>添付ファイルへのリンクを出力するプラグインです。</p><pre>{{ref ファイル名}}
+</pre><h3>ref_image</h3>
+<p>添付ファイルを画像として表示するプラグインです。</p><pre>{{ref_image ファイル名}}
+</pre><h3>ref_text</h3>
+<p>添付ファイルを整形済テキストとして表示するプラグインです。</p><pre>{{ref_text ファイル名}}
+</pre><h3>outline</h3>
+<p>ページのアウトラインを表示します。見出しがツリー形式で表示され、クリックするとその見出しにジャンプします。<a href="wiki.cgi?page=Header" class="wikipage">Header</a>などに入れておくと便利です。</p><pre>{{outline}}
+</pre><h3>search</h3>
+<p>検索フォームを表示します。サイドバーなどに入れておくと便利です。</p><pre>{{search}}
+</pre><h2>ライセンス</h2>
+<p>FSWikiLiteはGNUL GPLライセンスに基づいて改変、再配布が可能です。</p><h2>作成者</h2>
+<p>Naoki Takezoe &lt;<a href="mailto:takezoe@aa.bb-east.ne.jp">mailto:takezoe@aa.bb-east.ne.jp</a>&gt;</p></body>
+</html>
