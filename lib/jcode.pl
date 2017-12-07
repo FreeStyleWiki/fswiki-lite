@@ -3,7 +3,7 @@ package jcode;
 ;#
 ;# jcode.pl: Perl library for Japanese character code conversion
 ;#
-;# Copyright (c) 1995-1999 Kazumasa Utashiro <utashiro@iij.ad.jp>
+;# Copyright (c) 1995-2000 Kazumasa Utashiro <utashiro@iij.ad.jp>
 ;# Internet Initiative Japan Inc.
 ;# 3-13 Kanda Nishiki-cho, Chiyoda-ku, Tokyo 101-0054, Japan
 ;#
@@ -26,7 +26,7 @@ package jcode;
 ;#
 ;#	ftp://ftp.iij.ad.jp/pub/IIJ/dist/utashiro/perl/
 ;#
-;; $rcsid = q$Id: jcode.pl,v 1.1 2003/09/18 15:35:28 takezoe Exp $;
+;; $rcsid = q$Id: jcode.pl,v 2.13 2000/09/29 16:10:05 utashiro Exp $;
 ;#
 ;######################################################################
 ;#
@@ -257,7 +257,7 @@ package jcode;
 ;# Initialize variables.
 ;#
 sub init {
-    $version = $rcsid =~ /,v ([\d.]+)/ ? $1 : 'unkown';
+    $version = $rcsid =~ /,v ([\d.]+)/ ? $1 : 'unknown';
 
     $re_bin  = '[\000-\006\177\377]';
 
@@ -634,19 +634,24 @@ sub h2z_jis {
 }
 sub _h2z_jis {
     local($s) = @_;
-    $n += $s =~ s/([\41-\137]([\136\137])?)/$h2z{$1}/g;
+    $n += $s =~ s/(([\041-\137])([\136\137])?)/
+	$h2z{$1} || $h2z{$2} . $h2z{$3}
+    /ge;
     $s;
 }
 
 sub h2z_euc {
     local(*s) = @_;
-    $s =~ s/\216([\241-\337])(\216([\336\337]))?/$h2z{"$1$3"}/g;
+    $s =~ s/\216([\241-\337])(\216([\336\337]))?/
+	$h2z{"$1$3"} || $h2z{$1} . $h2z{$3}
+    /ge;
 }
 
 sub h2z_sjis {
     local(*s, $n) = @_;
     $s =~ s/(($re_sjis_c)+)|(([\241-\337])([\336\337])?)/
-	$1 || ($n++, $e2s{$h2z{$3}} || &e2s($h2z{$3}))
+	$1 || ($n++, $h2z{$3} ? $e2s{$h2z{$3}} || &e2s($h2z{$3})
+			      : &e2s($h2z{$4}) . ($5 && &e2s($h2z{$5})))
     /geo;
     $n;
 }
@@ -668,7 +673,7 @@ sub _z2h_jis {
 }
 sub __z2h_jis {
     local($s) = @_;
-    return $esc_0208 . $s unless /^%/ || $s =~ /^![\#\"&VW+,<]/;
+    return $esc_0208 . $s unless $s =~ /^%/ || $s =~ /^![\#\"&VW+,<]/;
     $n += length($s) / 2;
     $s =~ s/(..)/$z2h{$1}/g;
     $esc_kana . $s;
