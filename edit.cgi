@@ -102,7 +102,7 @@ sub edit_page {
 #-------------------------------------------------------------------------------
 sub new_page {
 	&print_header("ページの作成");
-	print "<form action=\"$SCRIPT_NAME\" method=\"POST\">\n";
+	print "<form action=\"$EDIT_SCRIPT\" method=\"POST\">\n";
 	print "  <input type=\"text\" name=\"p\" size=\"40\">\n";
 	print "  <input type=\"submit\" name=\"do_save\" value=\" 作 成 \">\n";
 	print "  <input type=\"hidden\" name=\"a\" value=\"edit\">\n";
