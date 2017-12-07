@@ -33,7 +33,6 @@ sub show_category {
 #===============================================================================
 sub show_all_category {
 	&print_header("¥«¥Æ¥´¥ê");
-	print "<h2>".&Util::escapeHTML($category)."</h2>\n";
 	print &Wiki::Plugin::category_list();
 	&print_footer();
 }
