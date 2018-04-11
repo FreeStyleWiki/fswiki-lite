@@ -122,3 +122,8 @@ div.comment {
   border           : AAAAFF 2px solid;
   font-size        : 80%;
 }
+
+.error {
+  color       : #FF0000;
+  font-weight : bold;
+}

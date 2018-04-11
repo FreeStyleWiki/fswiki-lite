@@ -1,13 +1,19 @@
 <html>
 <head>
   <title>プラグイン開発</title>
+  <meta http-equiv="Content-Type" content="text/html; charset=EUC-JP">
   <link rel="stylesheet" type="text/css" href="default.css">
 </head>
 <body>
+<h1>プラグイン開発</h1>
 <h2>サポートするプラグイン</h2>
-<p>FSWikiLiteはFSWikiとは違い、Wikiページに記述して使用するタイプのプラグイン（インラインプラグインとパラグラフプラグイン）しかサポートしていません。ただし、FSWikiでアクションプラグインと呼ばれているものについては別のCGIスクリプトを用意することで対応することができます（Liteのcategory.cgiなどがこれにあたります）。</p><p>プラグインは〜.plという名前を付けてpluginディレクトリに配置します。そしてlib/setup.plでrequireします。デフォルトのsetup.plではcore.plのみ読み込むよう設定されています。</p><pre>require &quot;./plugin/core.pl&quot;;
-</pre><h2>インラインプラグイン</h2>
-<p>インラインプラグインはWiki::Pluginパッケージで定義されたPerl関数のリファレンスです。関数の引数にはWikiソースで記述した引数がそのまま渡されます。関数は戻り値としてHTMLを返すように実装します。また、スクリプトのBEGIN節で関数のリファレンスをインラインプラグインとして登録します。</p><pre>package Wiki::Plugin;
+<p>FSWikiLiteはFSWikiとは違い、Wikiページに記述して使用するタイプのプラグイン（インラインプラグインとパラグラフプラグイン、ブロックプラグイン）しかサポートしていません。ただし、FSWikiでアクションプラグインと呼ばれているものについては別のCGIスクリプトを用意することで対応することができます（Liteのcategory.cgiなどがこれにあたります）。</p>
+<p>プラグインは〜.plという名前を付けてpluginディレクトリに配置します。そしてlib/setup.plでrequireします。デフォルトのsetup.plではcore.plのみ読み込むよう設定されています。</p>
+<pre>require &quot;./plugin/core.pl&quot;;
+</pre>
+<h2>インラインプラグイン</h2>
+<p>インラインプラグインはWiki::Pluginパッケージで定義されたPerl関数のリファレンスです。関数の引数にはWikiソースで記述した引数がそのまま渡されます。関数は戻り値としてHTMLを返すように実装します。また、スクリプトのBEGIN節で関数のリファレンスをインラインプラグインとして登録します。</p>
+<pre>package Wiki::Plugin;
 BEGIN {
   $main::I_PLUGIN-&gt;{hello} = \&amp;hello;
 }
@@ -20,24 +26,99 @@ sub hello {
   }
 }
 1;
-</pre><p>ページ編集時に以下の書式で使用することができます。</p><pre>{{hello たろう}}
-</pre><h2>パラグラフプラグイン</h2>
-<p>パラグラフプラグインも実装方法はインラインプラグインと同様です。ブロック要素を含むHTMLを返却する場合にはパラグラフプラグインとして実装します。BEGIN節での登録方法のみが異なります。</p><pre>BEGIN {
+</pre>
+<p>ページ編集時に以下の書式で使用することができます。</p>
+<pre>{{hello たろう}}
+</pre>
+<h2>パラグラフプラグイン</h2>
+<p>パラグラフプラグインも実装方法はインラインプラグインと同様です。ブロック要素を含むHTMLを返却する場合にはパラグラフプラグインとして実装します。BEGIN節での登録方法のみが異なります。</p>
+<pre>BEGIN {
   $main::P_PLUGIN-&gt;{hello} = \&amp;hello;
 }
-</pre><h2>リクエストパラメータへのアクセス</h2>
-<p>プラグイン内部からリクエストパラメータにアクセスするには%main::inという変数を利用します。これはcgi-lib.plでパースされたリクエストパラメータが格納された連想配列です。</p><pre># ページ名を取得
+</pre>
+<h2>ブロックプラグイン</h2>
+<p>ブロックプラグインも実装方法はインラインプラグインと同様です。複数行に渡るパラメータを使用する場合にはブロックプラグインとして実装します。</p>
+<pre>BEGIN {
+  $main::B_PLUGIN-&amp;gt;{hello} = \&amp;amp;hello;
+}
+sub hello {
+  my $text = shift;
+  my $name = shift;
+  if($name eq ''){
+    return &quot;名前を入力してください。&quot;;
+  } else {
+    return &quot;こんにちは&quot;.&amp;Util::escapeHTML($name).&quot;さん&amp;lt;br&amp;gt;\n&quot;.$text;
+  }
+}
+---- Wikiコード ----
+{{hello たろう
+ご機嫌いかがですか？
+今日は良い天気ですね。
+}}
+</pre>
+<h2>リクエストパラメータへのアクセス</h2>
+<p>プラグイン内部からリクエストパラメータにアクセスするには%main::inという変数を利用します。これはcgi-lib.plでパースされたリクエストパラメータが格納された連想配列です。</p>
+<pre># ページ名を取得
 my $p = $main::in{'p'};
-</pre><h2>プラグインから利用可能なユーティリティ</h2>
-<p>プラグイン内部ではUtilパッケージに定義されたユーティリティ関数を使用することができます。Utilパッケージには以下のような関数が定義されています。</p><table>
-<tr><th>関数名</th><th>説明</th></tr>
-<tr><td>url_encode</td><td>URLエンコードします。</td></tr>
-<tr><td>url_decode</td><td>URLエンコードされた文字列をデコードします。</td></tr>
-<tr><td>escapeHTML</td><td>HTMLをエスケープします。</td></tr>
-<tr><td>trim</td><td>文字列の前後の空白を取り除きます。</td></tr>
-<tr><td>check_numeric</td><td>文字列が数値かどうかチェックします。</td></tr>
-<tr><td>handyphone</td><td>携帯電話かどうかを判断します。</td></tr>
+</pre>
+<h2>プラグインから利用可能なユーティリティ</h2>
+<p>プラグイン内部ではUtilパッケージに定義されたユーティリティ関数を使用することができます。Utilパッケージには以下のような関数が定義されています。</p>
+<table>
+<tr>
+<th colspan="1">関数名</th>
+<th colspan="1">説明</th>
+</tr>
+<tr>
+<td colspan="1">url_encode</td>
+<td colspan="1">URLエンコードします。</td>
+</tr>
+<tr>
+<td colspan="1">url_decode</td>
+<td colspan="1">URLエンコードされた文字列をデコードします。</td>
+</tr>
+<tr>
+<td colspan="1">escapeHTML</td>
+<td colspan="1">HTMLをエスケープします。</td>
+</tr>
+<tr>
+<td colspan="1">format_date</td>
+<td colspan="1">日付をフォーマットします。</td>
+</tr>
+<tr>
+<td colspan="1">trim</td>
+<td colspan="1">文字列の前後の空白を取り除きます。</td>
+</tr>
+<tr>
+<td colspan="1">delete_tag</td>
+<td colspan="1">タグを削除して文字列のみを取得します。</td>
+</tr>
+<tr>
+<td colspan="1">check_pagename</td>
+<td colspan="1">文字列が使用可能なページ名かどうかチェックします。</td>
+</tr>
+<tr>
+<td colspan="1">check_numeric</td>
+<td colspan="1">文字列が数値かどうかチェックします。</td>
+</tr>
+<tr>
+<td colspan="1">send_mail</td>
+<td colspan="1">メールを送信します。</td>
+</tr>
+<tr>
+<td colspan="1">error</td>
+<td colspan="1">エラー画面を表示します。</td>
+</tr>
+<tr>
+<td colspan="1">handyphone</td>
+<td colspan="1">携帯電話かどうかを判断します。</td>
+</tr>
+<tr>
+<td colspan="1">smartphone</td>
+<td colspan="1">スマートフォンかどうかチェックします。</td>
+</tr>
 </table>
 <h2>アクションスクリプト</h2>
-<p>FSWikiでアクションプラグインとして実装されているプラグインは別途CGIスクリプトを作成することで対応することが出来ます。actionパラメータの代わりにそのCGIスクリプトを呼び出すようにします。CGIスクリプトからはcommon.plに定義された関数群を使用してページの取得や保存などを行うことが出来ます。</p><p>FSWikiLiteではデフォルトでedit.cgi（ページの編集）、download.cgi（添付ファイルのダウンロード）、category.cgi（カテゴリ表示）という３つのアクションスクリプトが用意されていますので、これらを参考にしてください。</p></body>
+<p>FSWikiでアクションプラグインとして実装されているプラグインは別途CGIスクリプトを作成することで対応することが出来ます。actionパラメータの代わりにそのCGIスクリプトを呼び出すようにします。CGIスクリプトからはcommon.plに定義された関数群を使用してページの取得や保存などを行うことが出来ます。</p>
+<p>FSWikiLiteではデフォルトでedit.cgi（ページの編集）、download.cgi（添付ファイルのダウンロード）、category.cgi（カテゴリ表示）という３つのアクションスクリプトが用意されていますので、これらを参考にしてください。</p>
+</body>
 </html>
