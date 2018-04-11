@@ -13,7 +13,7 @@ if($in{"p"} eq ""){
 	$in{"p"} = "FrontPage";
 }
 
-if($in{"p"}=~ /[\|:\[\]]/){
+if(!&Util::check_pagename($in{"p"})){
 	&Util::error("ページ名に使用できない文字が含まれています。");
 }
 
@@ -36,7 +36,7 @@ if($in{"a"} eq "edit"){
 	&attach_delete();
 	
 } else {
-	redirect("FrontPage");
+	&Wiki::redirect("FrontPage");
 }
 
 #-------------------------------------------------------------------------------
@@ -50,7 +50,7 @@ sub edit_page {
 	
 	if($source ne ""){
 		$preview = 1;
-	} elsif(&Wiki::exists_page($page)){
+	} elsif(&Wiki::page_exists($page)){
 		$source = &Wiki::get_page($page);
 		$time   = &Wiki::get_last_modified($page);
 	}
@@ -81,10 +81,10 @@ sub edit_page {
 	closedir(DIR);
 	foreach my $attach (@attachfiles){
 		$attach =~ /^\Q$main::ATTACH_DIR\E\/(.+)\.(.+)$/;
-		my $pagename = $1;
-		my $filename = $2;
-		print &Wiki::Plugin::ref(&Util::url_decode($filename));
-		printf ("[<a href=\"$EDIT_SCRIPT?a=delconf&p=%s&f=%s\">削除</a>]\n",$pagename,$filename);
+		my $pagename = &Util::url_decode($1);
+		my $filename = &Util::url_decode($2);
+		print &Wiki::Plugin::ref($filename);
+		printf("[<a href=\"%s\">削除</a>]\n",&Wiki::create_url({a=>delconf,p=>$pagename,f=>$filename}));
 	}
 	
 	print "<form action=\"$EDIT_SCRIPT\" method=\"post\" enctype=\"multipart/form-data\">\n";
@@ -124,25 +124,25 @@ sub save_page {
 		# ページの削除
 		if($source eq ""){
 			# 更新の重複チェック
-			if(&Wiki::exists_page($page)){
+			if(&Wiki::page_exists($page)){
 				if($in{"t"} != &Wiki::get_last_modified($page)){
 					&Util::error("このページは既に更新されています。");
 				} else {
 					&Wiki::remove_page($page);
 				}
 			}
-			&redirect("FrontPage");
+			&Wiki::redirect("FrontPage");
 			
 		# ページの作成または更新
 		} else {
 			# 更新の重複チェック
-			if(&Wiki::exists_page($page)){
+			if(&Wiki::page_exists($page)){
 				if($in{"t"} != &Wiki::get_last_modified($page)){
 					&Util::error("このページは既に更新されています。");
 				}
 			}
 			&Wiki::save_page($page,$source);
-			&redirect($page);
+			&Wiki::redirect($page);
 		}
 	}
 }
@@ -172,7 +172,7 @@ sub attach_file {
 	print DATA $file;
 	close(DATA);
 	
-	&redirectURL("$EDIT_SCRIPT?a=edit&p=".&Util::url_encode($page));
+	&Wiki::redirectURL(&Wiki::create_url({a=>edit,p=>$page}));
 }
 
 #-------------------------------------------------------------------------------
@@ -187,10 +187,10 @@ sub attach_delete_confirm {
 	}
 	
 	&print_header("添付ファイルの削除");
-	printf ("<p><a href=\"$MAIN_SCRIPT?p=%s\">%s</a>から".
-			"<a href=\"$DOWNLOAD_SCRIPT?p=%s&f=%s\">%s</a>を削除してよろしいですか？</p>\n",
-			&Util::url_encode($page),&Util::escapeHTML($page),
-			&Util::url_encode($page),&Util::url_encode($file),&Util::escapeHTML($file));
+	printf ("<p><a href=\"%s\">%s</a>から".
+			"<a href=\"%s\">%s</a>を削除してよろしいですか？</p>\n",
+			&Wiki::create_url({p=>$page}),&Util::escapeHTML($page),
+			&Wiki::create_url({p=>$page,f=>$file},$main::DOWNLOAD_SCRIPT),&Util::escapeHTML($file));
 	
 	print "<form action=\"$EDIT_SCRIPT\" method=\"POST\">\n";
 	print "  <input type=\"submit\" name=\"do_delete\" value=\" 削 除 \">\n";
@@ -215,5 +215,5 @@ sub attach_delete {
 	my $filename = sprintf("$ATTACH_DIR/%s.%s",&Util::url_encode($page),&Util::url_encode($file));
 	unlink($filename);
 	
-	&redirectURL("$EDIT_SCRIPT?a=edit&p=".&Util::url_encode($page));
+	&Wiki::redirectURL(&Wiki::create_url({a=>edit,p=>$page}));
 }

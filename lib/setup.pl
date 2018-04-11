@@ -13,6 +13,8 @@ $THEME_URL       = './theme/default/default.css';
 $ADMIN_MAIL      = '';
 $SEND_MAIL       = '';
 $WIKI_NAME       = 0;
+$BR_MODE         = 0;
+$DISPLAY_IMAGE   = 1;
 $MAIN_SCRIPT     = 'wiki.cgi';
 $EDIT_SCRIPT     = 'edit.cgi';
 $CATEGORY_SCRIPT = 'category.cgi';
@@ -22,7 +24,7 @@ $SITE_TITLE      = 'FSWikiLite';
 #===============================================================================
 # プロダクト情報
 #===============================================================================
-$VERSION         = '0.0.12';
+$VERSION         = '0.1.0';
 $SITE_URL        = 'http://fswiki.osdn.jp/cgi-bin/wiki.cgi';
 
 #===============================================================================

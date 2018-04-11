@@ -8,37 +8,6 @@ require "./lib/jcode.pl";
 require "./lib/mimew.pl";
 require "./lib/setup.pl";
 #-------------------------------------------------------------------------------
-# 引数で渡したページに遷移
-#-------------------------------------------------------------------------------
-sub redirect {
-	my $page = shift;
-	my $url  = "$MAIN_SCRIPT?p=".&Util::url_encode($page);
-	&redirectURL($url);
-}
-
-#-------------------------------------------------------------------------------
-# 引数で渡したURLに遷移
-#-------------------------------------------------------------------------------
-sub redirectURL {
-	my $url  = shift;
-	
-	print "Content-Type: text/html;charset=EUC-JP\n";
-	print "Pragma: no-cache\n";
-	print "Cache-Control: no-cache\n\n";
-	print "<html>\n";
-	print "  <head>\n";
-	print "    <title>moving...</title>\n";
-	print "    <meta http-equiv=\"Refresh\" content=\"0;URL=$url\">\n";
-	print "  </head>\n";
-	print "  <body>\n";
-	print "    Wait or <a href=\"$url\">Click Here!!</a>\n";
-	print "  </body>\n";
-	print "</html>\n";
-	
-	exit;
-}
-
-#-------------------------------------------------------------------------------
 # ヘッダを表示
 #-------------------------------------------------------------------------------
 sub print_header {
@@ -57,37 +26,52 @@ sub print_header {
 	
 	print "<div class=\"adminmenu\">\n";
 	print "  <span class=\"adminmenu\">\n";
-	print "    <a href=\"$MAIN_SCRIPT?p=FrontPage\">FrontPage</a>\n";
-	print "    <a href=\"$EDIT_SCRIPT?a=new\">新規</a>\n";
+	print "    <a href=\"".&Wiki::create_url({p=>"FrontPage"})."\">FrontPage</a>\n";
+	print "    <a href=\"".&Wiki::create_url({a=>"new"})."\">新規</a>\n";
 	if($show==1){
-		print "    <a href=\"$EDIT_SCRIPT?a=edit&p=".&Util::url_encode($in{"p"})."\">編集</a>\n";
+		print "    <a href=\"".&Wiki::create_url({a=>"edit",p=>$in{"p"}})."\">編集</a>\n";
 	}
-	print "    <a href=\"$MAIN_SCRIPT?a=search\">検索</a>\n";
-	print "    <a href=\"$MAIN_SCRIPT?a=list\">一覧</a>\n";
-	print "    <a href=\"$MAIN_SCRIPT?p=Help\">ヘルプ</a>\n";
+	print "    <a href=\"".&Wiki::create_url({a=>"search"})."\">検索</a>\n";
+	print "    <a href=\"".&Wiki::create_url({a=>"list"})."\">一覧</a>\n";
+	print "    <a href=\"".&Wiki::create_url({p=>"Help"})."\">ヘルプ</a>\n";
 	print "  </span>\n";
 	print "</div>\n";
 	
 	print "<h1>".&Util::escapeHTML($title)."</h1>\n";
-	if(&Wiki::exists_page("Menu")){
+	if(&Wiki::page_exists("Menu")){
 		print "<div class=\"main\">\n";
 	}
-	
 }
 
 #-------------------------------------------------------------------------------
 # フッタを表示
 #-------------------------------------------------------------------------------
 sub print_footer {
-	if(&Wiki::exists_page("Menu")){
+	if(&Wiki::page_exists("Menu")){
 		print "</div>\n";
 		print "<div class=\"sidebar\">\n";
 		print &Wiki::process_wiki(&Wiki::get_page("Menu"));
 		print "</div>\n";
 	}
-	print "<div class=\"footer\">Powered by <a href=\"$main::SITE_URL\">FreeStyleWikiLite $main::VERSION</a></div>\n";
+	print "<div class=\"footer\">Powered by <a href=\"".$main::SITE_URL."\">FreeStyleWikiLite ".$main::VERSION."</a></div>\n";
 	print "</body></html>\n";
 }
+
+#-------------------------------------------------------------------------------
+# 旧Ver(0.0.11)互換性維持
+# 次期バージョンで削除されます。
+#-------------------------------------------------------------------------------
+sub redirect { return &Wiki::redirect($@); }
+sub redirectURL { return &Wiki::redirectURL($@); }
+
+package Wiki;
+sub exists_page { return &page_exists(shift); }
+sub send_mail { return &Util::send_mail($@); }
+
+package HTMLParser;
+
+package Util;
+sub parse_plugin { return &Wiki::parse_inline_plugin($@); }
 
 ###############################################################################
 #
@@ -95,9 +79,210 @@ sub print_footer {
 #
 ###############################################################################
 package Wiki;
-#-------------------------------------------------------------------------------
+
+local @current_parser = [];
+
+#==============================================================================
+# プラグインの情報を取得します
+#==============================================================================
+sub get_plugin_info {
+	my $name = shift;
+	return defined($main::P_PLUGIN->{$name}) ? {FUNCTION=>$main::P_PLUGIN->{$name}, TYPE=>'paragraph'} :
+	       defined($main::I_PLUGIN->{$name}) ? {FUNCTION=>$main::I_PLUGIN->{$name}, TYPE=>'inline'   } :
+	       defined($main::B_PLUGIN->{$name}) ? {FUNCTION=>$main::B_PLUGIN->{$name}, TYPE=>'block'    } :
+	       {};
+}
+
+#==============================================================================
+# Wikiソースを渡してHTMLを取得します
+#==============================================================================
+sub process_wiki {
+	my $source  = shift;
+	my $mainflg = shift;
+	my $parser  = HTMLParser->new($mainflg);
+	
+	# 裏技用(プラグイン内部からパーサを使う場合)
+	push(@current_parser, $parser);
+	
+	$parser->parse($source);
+	
+	# パーサの参照を解放
+	pop(@current_parser);
+	
+	return $parser->{html};
+}
+
+#==============================================================================
+# パース中の場合、現在有効なHTMLParserのインスタンスを返却します。
+# パース中の内容をプラグインから変更したい場合に使用します。
+#==============================================================================
+sub get_current_parser {
+	return $current_parser[$#current_parser];
+}
+
+#===============================================================================
+# インラインプラグインをパースしてコマンドと引数に分割
+#===============================================================================
+sub parse_inline_plugin {
+	my $text = shift;
+	my ($cmd, @args_tmp) = split(/ /,$text);
+	my $args_txt = &Util::trim(join(" ",@args_tmp));
+	if($cmd =~ s/\}\}(.*?)$//){
+		return { command=>$cmd, args=>[], post=>"$1 $args_txt"};
+	}
+	
+	my @ret_args;
+	my $tmp    = "";
+	my $escape = 0;
+	my $quote  = 0;
+	my $i      = 0;
+	
+	for($i = 0; $i<length($args_txt); $i++){
+		my $c = substr($args_txt,$i,1);
+		if($quote!=1 && $c eq ","){
+			if($quote==3){
+				$tmp .= '}';
+			}
+			push(@ret_args,$tmp);
+			$tmp = "";
+			$quote = 0;
+		} elsif($quote==1 && $c eq "\\"){
+			if($escape==0){
+				$escape = 1;
+			} else {
+				$tmp .= $c;
+				$escape = 0;
+			}
+		} elsif($quote==0 && $c eq '"'){
+			if($tmp eq ""){
+				$quote = 1;
+			} else {
+				$tmp .= $c;
+			}
+		} elsif($quote==1 && $c eq '"'){
+			if($escape==1){
+				$tmp .= $c;
+				$escape = 0;
+			} else {
+				$quote = 2;
+			}
+		} elsif(($quote==0 || $quote==2) && $c eq '}'){
+			$quote = 3;
+		} elsif($quote==3){
+			if($c eq '}'){
+				last;
+			} else {
+				$tmp .= '}'.$c;
+				$quote = 0;
+			}
+		} elsif($quote==2){
+			return {error=>"インラインプラグインの構文が不正です。"};
+		} else {
+			$tmp .= $c;
+			$escape = 0;
+		}
+	}
+	
+	if($quote!=3){
+		my $info = &Wiki::get_plugin_info($cmd);
+		return undef if (defined($info->{TYPE}) && $info->{TYPE} ne 'block');
+	}
+	
+	if($tmp ne ""){
+		push(@ret_args,$tmp);
+	}
+	
+	return { command=>$cmd, args=>\@ret_args, 
+		post=>substr($args_txt, $i + 1, length($args_txt) - $i)};
+}
+
+#==============================================================================
+# ページ表示のURLを生成
+#==============================================================================
+sub create_page_url {
+	my $page = shift;
+	return create_url({p=>$page});
+}
+
+#==============================================================================
+# 任意のURLを生成
+#==============================================================================
+sub create_url {
+	my $params = shift;
+	my $script = shift;
+	my $url    = '';
+	my $query  = '';
+	my $action = '';
+	foreach my $key (keys(%$params)){
+		my $val = $params->{$key};
+		if ($key eq 'a') {
+			$action = $val;
+		}
+		if($query ne ''){
+			$query .= '&amp;';
+		}
+		$query .= Util::url_encode($key)."=".Util::url_encode($val);
+	}
+	if(!defined($script)){
+		if ($action =~ /^(edit|new|delconf)$/){
+			$script = $main::EDIT_SCRIPT;
+		}else{
+			$script = $main::MAIN_SCRIPT;
+		}
+	}
+	$url = $script;
+	if($query ne ''){
+		$url .= '?'.$query; 
+	}
+	return $url;
+}
+
+#==============================================================================
+# ページの一覧を取得
+#==============================================================================
+sub get_page_list {
+	opendir(DIR, $main::DATA_DIR);
+	my ($fileentry, @files);
+	while($fileentry = readdir(DIR)){
+		my $type = substr($fileentry,rindex($fileentry,"."));
+		if($type eq ".wiki"){
+			push(@files, "$main::DATA_DIR/$fileentry");
+		}
+	}
+	closedir(DIR);
+
+	my @pages;	
+	foreach my $entry (@files){
+		my @stat = stat($entry);
+		my $time = $stat[9];
+		
+		$entry = substr($entry,length($main::DATA_DIR)+1);
+		$entry =~ /(.+?)\.wiki/;
+		my $page = &Util::url_decode($1);
+		push(@pages,{NAME=>$page,TIME=>$time});
+	}
+	
+	@pages = sort { $b->{TIME}<=>$a->{TIME} } @pages;
+	return @pages;
+}
+
+#==============================================================================
+# ページの更新日時を取得
+#==============================================================================
+sub get_last_modified {
+	my $page = shift;
+	if(&page_exists($page)){
+		my $file = sprintf("%s/%s.wiki",$main::DATA_DIR,&Util::url_encode($page));
+		my @stat = stat($file);
+		return $stat[9];
+	} else {
+		return undef;
+	}
+}
+
+#==============================================================================
 # ページを取得
-#-------------------------------------------------------------------------------
+#==============================================================================
 sub get_page {
 	my $page = &Util::url_encode(shift);
 	
@@ -110,9 +295,9 @@ sub get_page {
 	
 	return $content;
 }
-#-------------------------------------------------------------------------------
+#==============================================================================
 # ページを保存
-#-------------------------------------------------------------------------------
+#==============================================================================
 sub save_page {
 	my $page   = shift;
 	my $source = shift;
@@ -143,121 +328,13 @@ sub save_page {
 	print DATA $source;
 	close(DATA);
 	
-	&send_mail($action,$page);
-}
-#-------------------------------------------------------------------------------
-# ページを削除
-#-------------------------------------------------------------------------------
-sub remove_page {
-	my $page     = shift;
-	my $enc_page = &Util::url_encode($page);
-	unlink("$main::DATA_DIR/$enc_page.wiki") or &Util::error("$main::DATA_DIR/$enc_page.wikiの削除に失敗しました。");
-	
-	&send_mail('DELETE',$page);
-}
-#-------------------------------------------------------------------------------
-# メール送信
-#-------------------------------------------------------------------------------
-sub send_mail {
-	my $action   = shift;
-	my $page     = shift;
-	my $enc_page = &Util::url_encode($page);
-	
-	if($main::ADMIN_MAIL eq "" || $main::SEND_MAIL eq ""){
-		return;
-	}
-	
-	my $subject = "";
-	if($action eq 'CREATE'){
-		$subject = "[FSWikiLite]$pageが作成されました";
-		
-	} elsif($action eq 'MODIFY'){
-		$subject = "[FSWikiLite]$pageが更新されました";
-		
-	} elsif($action eq 'DELETE'){
-		$subject = "[FSWikiLite]$pageが削除されました";
-	}
-	
-	# MIMEエンコード
-	$subject = &main::mimeencode($subject);
-	
-	my $head = "Subject: $subject\n".
-	           "From: $main::ADMIN_MAIL\n".
-	           "Content-Transfer-Encoding: 7bit\n".
-	           "Content-Type: text/plain; charset=\"ISO-2022-JP\"\n".
-	           "Reply-To: $main::ADMIN_MAIL\n".
-	           "\n";
-	
-	my $body = "IP:".$ENV{'REMOTE_ADDR'}."\n".
-	           "UA:".$ENV{'HTTP_USER_AGENT'}."\n";
-	
-	if($action eq 'MODIFY' || $action eq 'DELETE'){
-		if(-e "$main::BACKUP_DIR/$enc_page.bak"){
-			$body .= "以下は変更前のソースです。\n".
-			         "-----------------------------------------------------\n";
-			open(BACKUP,"$main::BACKUP_DIR/$enc_page.bak");
-			while(my $line = <BACKUP>){
-				$body .= $line;
-			}
-			close(BACKUP);
-		}
-	}
-	
-	# 文字コードの変換(jcode.plを使用する)
-	&jcode::convert(\$body,'jis');
-	
-	open(MAIL,"| $main::SEND_MAIL $main::ADMIN_MAIL");
-	print MAIL $head;
-	print MAIL $body;
-	close(MAIL);
-}
-#-------------------------------------------------------------------------------
-# ページの一覧を取得
-#-------------------------------------------------------------------------------
-sub get_page_list {
-	opendir(DIR, $main::DATA_DIR);
-	my ($fileentry, @files);
-	while($fileentry = readdir(DIR)){
-		my $type = substr($fileentry,rindex($fileentry,"."));
-		if($type eq ".wiki"){
-			push(@files, "$main::DATA_DIR/$fileentry");
-		}
-	}
-	closedir(DIR);
-
-	my @pages;	
-	foreach my $entry (@files){
-		my @stat = stat($entry);
-		my $time = $stat[9];
-		
-		$entry = substr($entry,length($main::DATA_DIR)+1);
-		$entry =~ /(.+?)\.wiki/;
-		my $page = &Util::url_decode($1);
-		push(@pages,{NAME=>$page,TIME=>$time});
-	}
-	
-	@pages = sort { $b->{TIME}<=>$a->{TIME} } @pages;
-	return @pages;
+	&Util::send_mail($action,$page);
 }
 
-#-------------------------------------------------------------------------------
-# ページの更新日時を取得
-#-------------------------------------------------------------------------------
-sub get_last_modified {
-	my $page = shift;
-	if(&exists_page($page)){
-		my $file = sprintf("%s/%s.wiki",$main::DATA_DIR,&Util::url_encode($page));
-		my @stat = stat($file);
-		return $stat[9];
-	} else {
-		return undef;
-	}
-}
-
-#-------------------------------------------------------------------------------
+#==============================================================================
 # ページが存在するかどうか
-#-------------------------------------------------------------------------------
-sub exists_page {
+#==============================================================================
+sub page_exists {
 	my $page = &Util::url_encode(shift);
 	if(-e "$main::DATA_DIR/$page.wiki"){
 		return 1;
@@ -266,16 +343,46 @@ sub exists_page {
 	}
 }
 
-#-------------------------------------------------------------------------------
-# Wikiソースを渡してHTMLを取得します
-#-------------------------------------------------------------------------------
-sub process_wiki {
-	my $source = shift;
-	my $main   = shift;
-	my $parser = HTMLParser->new($main);
-	$parser->parse($source);
+#==============================================================================
+# 引数で渡したページに遷移
+#==============================================================================
+sub redirect {
+	my $page = shift;
+	my $url  = &Wiki::create_url({p=>$page});
+	&redirectURL($url);
+}
+
+#==============================================================================
+# 引数で渡したURLに遷移
+#==============================================================================
+sub redirectURL {
+	my $url  = shift;
 	
-	return $parser->{html};
+	print "Content-Type: text/html;charset=EUC-JP\n";
+	print "Pragma: no-cache\n";
+	print "Cache-Control: no-cache\n\n";
+	print "<html>\n";
+	print "  <head>\n";
+	print "    <title>moving...</title>\n";
+	print "    <meta http-equiv=\"Refresh\" content=\"0;URL=$url\">\n";
+	print "  </head>\n";
+	print "  <body>\n";
+	print "    Wait or <a href=\"$url\">Click Here!!</a>\n";
+	print "  </body>\n";
+	print "</html>\n";
+	
+	exit;
+}
+
+#==============================================================================
+# ページを削除
+#==============================================================================
+sub remove_page {
+	my $page     = shift;
+	my $enc_page = &Util::url_encode($page);
+	unlink("$main::DATA_DIR/$enc_page.wiki") or &Util::error("$main::DATA_DIR/$enc_page.wikiの削除に失敗しました。");
+	
+	&Util::send_mail('DELETE',$page);
 }
 
 ###############################################################################
@@ -294,14 +401,18 @@ sub new {
 	
 	if(!defined($mainflg) || $mainflg eq ""){ $mainflg = 0; }
 	
+	$self->{dl_flag} = 0;
+	$self->{dt} = "";
+	$self->{dd} = "";
+	
 	$self->{html}  = "";
 	$self->{pre}   = "";
 	$self->{quote} = "";
 	$self->{table} = 0;
 	$self->{level} = 0;
+	$self->{list}  = 0;
 	$self->{para}  = 0;
 	$self->{p_cnt} = 0;
-	$self->{explan} = 0;
 	$self->{main}  = $mainflg;
 	return bless $self,$class;
 }
@@ -313,7 +424,9 @@ sub parse {
 	my $self   = shift;
 	my $source = shift;
 	
+	$self->start_parse;
 	$source =~ s/\r//g;
+	
 	my @lines = split(/\n/,$source);
 	
 	foreach my $line (@lines){
@@ -327,20 +440,63 @@ sub parse {
 		my $word3 = substr($line,0,3);
 		
 		# 空行
-		if($line eq ""){
+		if($line eq "" && !$self->{block}){
 			$self->l_paragraph();
 			next;
 		}
 		
+		# ブロック書式のエスケープ
+		if($word2 eq "\\\\" || $word1 eq "\\"){
+			my @obj = $self->parse_line(substr($line, 1));
+			$self->l_text(\@obj);
+			next;
+		}
+		
 		# パラグラフプラグイン
-		if($line =~ /^{{((.|\s)+?)}}$/){
-			my $plugin = &Util::parse_plugin($1);
-			my $class  = $main::P_PLUGIN->{$plugin->{command}};
-			if(defined($class)){
-				$self->l_plugin($plugin);
+		if($line =~ /^\{\{(.+\}\})$/){
+			if(!$self->{block}){
+				my $plugin = &Wiki::parse_inline_plugin($1);
+				my $info   = &Wiki::get_plugin_info($plugin->{command});
+				if($info->{TYPE} eq "paragraph"){
+					$self->l_plugin($plugin);
+				} else {
+					my @obj = $self->parse_line($line);
+					$self->l_text(\@obj);
+				}
+				next;
+			}
+		} elsif($line =~ /^\{\{(.+)$/){
+			if ($self->{block}) {
+				my $plugin = &Wiki::parse_inline_plugin($1);
+				my $info   = &Wiki::get_plugin_info($plugin->{command});
+				$self->{block}->{level}++ if($info->{TYPE} eq "block");
+				$self->{block}->{args}->[0] .= $line."\n";
+				next;
+			}
+			my $plugin = &Wiki::parse_inline_plugin($1);
+			my $info   = &Wiki::get_plugin_info($plugin->{command});
+			if($info->{TYPE} eq "block"){
+				unshift(@{$plugin->{args}}, "");
+				$self->{block} = $plugin;
+				$self->{block}->{level} = 0;
 			} else {
 				my @obj = $self->parse_line($line);
 				$self->l_text(\@obj);
+			}
+			next;
+		}
+		if($self->{block}){
+			if($line eq "}}"){
+				if ($self->{block}->{level} > 0) {
+					$self->{block}->{level}--;
+					$self->{block}->{args}->[0] .= $line."\n";
+					next;
+				}
+				my $plugin = $self->{block};
+				delete($self->{block});
+				$self->l_plugin($plugin);
+			} else {
+				$self->{block}->{args}->[0] .= $line."\n";
 			}
 			next;
 		}
@@ -403,10 +559,10 @@ sub parse {
 				$self->{dd} .= substr($line,3);
 				next;
 			}
+			if($self->{dt} ne "" || $self->{dd} ne ""){
+				$self->multi_explanation;
+			}
 			if(index($line,"::")==0){
-				if($self->{dt} ne "" || $self->{dd} ne ""){
-					$self->multi_explanation;
-				}
 				$self->{dt} = substr($line,2);
 				$self->{dl_flag} = 1;
 				next;
@@ -423,7 +579,7 @@ sub parse {
 				$line .= " ";
 			}
 			my @spl = map {/^"(.*)"$/ ? scalar($_ = $1, s/\"\"/\"/g, $_) : $_}
-			              ($line =~ /,\s*(\"[^\"]*(?:\"\"[^\"]*)*\"|[^,]*)/g);
+						  ($line =~ /,\s*(\"[^\"]*(?:\"\"[^\"]*)*\"|[^,]*)/g);
 			my @array;
 			foreach my $value (@spl){
 				my @cell = $self->parse_line($value);
@@ -443,6 +599,13 @@ sub parse {
 	
 	# 複数行の説明
 	$self->multi_explanation;
+	
+	# パース中のブロックプラグインがあった場合、とりあえず評価しておく？
+	if($self->{block}){
+		my $plugin = $self->{block};
+		delete($self->{block});
+		$self->l_plugin($plugin);
+	}
 	
 	$self->end_parse;
 }
@@ -467,120 +630,221 @@ sub multi_explanation {
 # １行分をパース
 #===============================================================================
 sub parse_line {
-	my $self   = shift;
-	my $source = shift;
-	my @array  = ();
-	
-	# プラグイン
-	if($source =~ /{{((.|\s)+?)}}/){
-		my $pre  = $`;
-		my $post = $';
-		if($pre ne ""){ push(@array,$self->parse_line($pre)); }
-		my $plugin = &Util::parse_plugin($1);
-		my $class  = $main::I_PLUGIN->{$plugin->{command}};
-		if(defined($class)){
-			push @array,$self->plugin($plugin);
-		} else {
-			push @array,$self->text("{{$1}}");
-		}
-		if($post ne ""){ push(@array,$self->parse_line($post)); }
-		
-	# ボールド、イタリック、取り消し線、下線
-	} elsif($source =~ /((''')|('')|(==)|(__))(.+?)(\1)/){
-		my $pre   = $`;
-		my $post  = $';
-		my $type  = $1;
-		my $label = $6;
-		if($pre ne ""){ push(@array,$self->parse_line($pre)); }
-		if($type eq "'''"){
-			push @array,$self->bold($label);
-		} elsif($type eq "__"){
-			push @array,$self->underline($label);
-		} elsif($type eq "''"){
-			push @array,$self->italic($label);
-		} elsif($type eq "=="){
-			push @array,$self->denialline($label);
-		}
-		if($post ne ""){ push(@array,$self->parse_line($post)); }
-		
-	# ページ別名リンク
-	} elsif($source =~ /\[\[([^\[]+?)\|(.+?)\]\]/){
-		my $pre   = $`;
-		my $post  = $';
-		my $label = $1;
-		my $page  = $2;
-		if($pre ne ""){ push(@array,$self->parse_line($pre)); }
-		push @array,$self->wiki_anchor($page,$label);
-		if($post ne ""){ push(@array,$self->parse_line($post)); }
+	my ($self, $source) = @_;
 
-	# URL別名リンク
-	} elsif($source =~ /\[([^\[]+?)\|((http|https|ftp|mailto):[a-zA-Z0-9\.,%~^_+\-%\/\?\(\)!\$&=:;\*#\@']*)\]/
-	    ||  $source =~ /\[([^\[]+?)\|(file:[^\[\]]*)\]/
-	    ||  $source =~ /\[([^\[]+?)\|((\/|\.\/|\.\.\/)+[a-zA-Z0-9\.,%~^_+\-%\/\?\(\)!\$&=:;\*#\@']*)\]/){
-		my $pre   = $`;
-		my $post  = $';
-		my $label = $1;
-		my $url   = $2;
-		if($pre ne ""){ push(@array,$self->parse_line($pre)); }
-		if(index($url,'"') >= 0 || index($url,'><') >= 0 || index($url, 'javascript:') >= 0){
-			push @array,"<span class=\"error\">不正なリンクです。</span>";
-		} else {
-			push @array,$self->url_anchor($url,$label);
-		}
-		if($post ne ""){ push(@array,$self->parse_line($post)); }
-		
-	# URLリンク
-	} elsif($source =~ /(http|https|ftp|mailto):[a-zA-Z0-9\.,%~^_+\-%\/\?\(\)!\$&=:;\*#\@']*/
-	    ||  $source =~ /\[([^\[]+?)\|(file:[^\[\]]*)\]/){
-		my $pre   = $`;
-		my $post  = $';
-		my $url = $&;
-		if($pre ne ""){ push(@array,$self->parse_line($pre)); }
-		if(index($url,'"') >= 0 || index($url,'><') >= 0 || index($url, 'javascript:') >= 0){
-			push @array,"<span class=\"error\">不正なリンクです。</span>";
-		} else {
-			push @array,$self->url_anchor($url);
-		}
-		if($post ne ""){ push(@array,$self->parse_line($post)); }
-		
-	# ページリンク
-	} elsif($source =~ /\[\[([^\|]+?)\]\]/){
-		my $pre   = $`;
-		my $post  = $';
-		my $page = $1;
-		if($pre ne ""){ push(@array,$self->parse_line($pre)); }
-		push @array,$self->wiki_anchor($page);
-		if($post ne ""){ push(@array,$self->parse_line($post)); }
+	return () if (not defined $source);
 
-	# 任意のURLリンク
-	} elsif($source =~ /\[([^\[]+?)\|(.+?)\]/){
-		my $pre   = $`;
-		my $post  = $';
-		my $label = $1;
-		my $url   = $2;
-		if($pre ne ""){ push(@array,$self->parse_line($pre)); }
-		if(index($url,'"') >= 0 || index($url,'><') >= 0 || index($url, 'javascript:') >= 0){
-			push @array,"<span class=\"error\">不正なリンクです。</span>";
-		} else {
-			push @array,$self->url_anchor($url,$label);
+	my @array = ();
+	my $pre   = q{};
+	my @parsed = ();
+
+	# $source が空になるまで繰り返す。
+	SOURCE:
+	while ($source ne q{}) {
+
+		# どのインライン Wiki 書式の先頭にも match しない場合
+		if (!($source =~ /^(.*?)((?:\{\{|\[\[?|https?:|mailto:|f(?:tp:|ile:)|'''?|==|__|<<).*)$/)) {
+			# WikiName検索・置換処理のみ実施して終了する
+			push @array, $self->_parse_line_wikiname($pre . $source);
+			return @array;
 		}
-		if($post ne ""){ push(@array,$self->parse_line($post)); }
-		
-	# WikiName
-	} elsif($main::WIKI_NAME==1 && $source =~ /[A-Z]+?[a-z]+?([A-Z]+?[a-z]+)+/){
-		my $pre   = $`;
-		my $post  = $';
-		my $page  = $&;
-		if($pre ne ""){ push(@array,$self->parse_line($pre)); }
-		push @array,$self->wiki_anchor($page);
-		if($post ne ""){ push(@array,$self->parse_line($post)); }
-		
-	} else {
-		push @array,$self->text($source);
+
+		$pre   .= $1;	# match しなかった先頭部分は溜めておいて後で処理する
+		$source = $2;	# match 部分は後続処理にて詳細チェックを行う
+		@parsed = ();
+
+		# プラグイン
+		if ($source =~ /^\{\{/) {
+			$source = $';
+			my $plugin = &Wiki::parse_inline_plugin($source);
+			unless($plugin){
+				push @parsed, '{{';
+				push @parsed, $self->parse_line($source);
+			} else {
+				my $info = &Wiki::get_plugin_info($plugin->{command});
+				if($info->{TYPE} eq "inline"){
+					push @parsed, $self->plugin($plugin);
+				} else {
+					push @parsed, $self->parse_line("<<".$plugin->{command}."プラグインは存在しません。>>");
+				}
+				if ($source ne "") {
+					$source = $plugin->{post};
+				}
+			}
+		}
+
+		# ページ別名リンク
+		elsif ($source =~ /^\[\[([^\[]+?)\|([^\|\[]+?)\]\]/) {
+			my $label = $1;
+			my $page  = $2;
+			$source = $';
+			push @parsed, $self->wiki_anchor($page, $label);
+		}
+
+		# URL別名リンク
+		elsif ($source
+			=~ /^\[([^\[]+?)\|((?:http|https|ftp|mailto):[a-zA-Z0-9\.,%~^_+\-%\/\?\(\)!&=:;\*#\@'\$]*)\]/
+			|| $source =~ /^\[([^\[]+?)\|(file:[^\[\]]*)\]/
+			|| $source
+			=~ /^\[([^\[]+?)\|((?:\/|\.\/|\.\.\/)+[a-zA-Z0-9\.,%~^_+\-%\/\?\(\)!&=:;\*#\@'\$]*)\]/
+			)
+		{
+			my $label = $1;
+			my $url   = $2;
+			$source = $';
+			if (   index($url, q{"}) >= 0
+				|| index($url, '><') >= 0
+				|| index($url, 'javascript:') >= 0)
+			{
+				push @parsed, $self->parse_line('<<不正なリンクです。>>');
+			}
+			else {
+				push @parsed, $self->url_anchor($url, $label);
+			}
+		}
+
+		# URLリンク
+		elsif ($source
+			=~ /^(?:https?|ftp|mailto):[a-zA-Z0-9\.,%~^_+\-%\/\?\(\)!&=:;\*#\@'\$]*/
+			|| $source =~ /^file:[^\[\]]*/)
+		{
+			my $url = $&;
+			$source = $';
+			if (   index($url, q{"}) >= 0
+				|| index($url, '><') >= 0
+				|| index($url, 'javascript:') >= 0)
+			{
+				push @parsed, $self->parse_line('<<不正なリンクです。>>');
+			}
+			else {
+				push @parsed, $self->url_anchor($url);
+			}
+		}
+
+		# ページリンク
+		elsif ($source =~ /^\[\[([^\|]+?)\]\]/) {
+			my $page = $1;
+			$source = $';
+			push @parsed, $self->wiki_anchor($page);
+		}
+
+		# 任意のURLリンク
+		elsif ($source =~ /^\[([^\[]+?)\|(.+?)\]/) {
+			my $label = $1;
+			my $url   = $2;
+			$source = $';
+			if (   index($url, q{"}) >= 0
+				|| index($url, '><') >= 0
+				|| index($url, 'javascript:') >= 0)
+			{
+				push @parsed, $self->parse_line('<<不正なリンクです。>>');
+			}
+			else {
+				# URIを作成
+				my $uri  = &main::MyBaseUrl().$ENV{"PATH_INFO"};
+				push @parsed, $self->url_anchor($uri . '/../' . $url, $label);
+			}
+		}
+
+		# ボールド、イタリック、取り消し線、下線
+		elsif ($source =~ /^('''?|==|__)(.+?)\1/) {
+			my $type  = $1;
+			my $label = $2;
+			$source = $';
+			if ($type eq q{'''}) {
+				push @parsed, $self->bold($label);
+			}
+			elsif ($type eq q{__}) {
+				push @parsed, $self->underline($label);
+			}
+			elsif ($type eq q{''}) {
+				push @parsed, $self->italic($label);
+			}
+			else {							   ## elsif ($type eq q{==}) {
+				push @parsed, $self->denialline($label);
+			}
+		}
+
+		# エラーメッセージ
+		elsif ($source =~ /^<<(.+?)>>/) {
+			my $label = $1;
+			$source = $';
+			push @parsed, $self->error($label);
+		}
+
+		# インライン Wiki 書式全体には macth しなかったとき
+		else {
+			# 1 文字進む。
+			if ($source =~ /^(.)/) {
+				$pre .= $1;
+				$source = $';
+			}
+			
+			# parse 結果を @array に保存する処理を飛ばして繰り返し。
+			next SOURCE;
+		}
+
+		# インライン Wiki 書式全体に macth した後の
+		# parse 結果を @array に保存する処理。
+
+		# もし $pre が溜まっているなら、WikiNameの処理を実施。
+		if ($pre ne q{}) {
+			push @array, $self->_parse_line_wikiname($pre);
+			$pre = q{};
+		}
+
+		push @array, @parsed;
 	}
-	
+
+	# もし $pre が溜まっているなら、WikiNameの処理を実施。
+	if ($pre ne q{}) {
+		push @array, $self->_parse_line_wikiname($pre);
+	}
+
 	return @array;
 }
+
+#========================================================================
+# parse_line() から呼び出され、WikiNameの検索・置換処理を行います。
+#========================================================================
+sub _parse_line_wikiname {
+	my $self   = shift;
+	my $source = shift;
+
+	return () if (not defined $source);
+
+	my @array = ();
+
+	# $source が空になるまで繰り返す。
+	while ($source ne q{}) {
+
+		# WikiName
+		if ($main::WIKI_NAME == 1 && $source =~ /[A-Z]+?[a-z]+?(?:[A-Z]+?[a-z]+)+/) {
+			my $pre  = $`;
+			my $page = $&;
+			$source  = $';
+			if ($pre ne q{}) {
+				push @array, $self->_parse_line_wikiname($pre);
+			}
+			push @array, $self->wiki_anchor($page);
+		}
+
+		# WikiName も見つからなかったとき
+		else {
+			push @array, $self->text($source);
+			return @array;
+		}
+	}
+	return @array;
+}
+
+#===============================================================================
+# <p>
+# パースを開始前に呼び出されます。
+# サブクラスで必要な処理がある場合はオーバーライドしてください。
+# </p>
+#===============================================================================
+sub start_parse {}
 
 #==============================================================================
 # リスト
@@ -595,30 +859,39 @@ sub l_list {
 		$self->{para} = 0;
 	}
 	
+	if($self->{list} == 1 && $level <= $self->{level}){
+		$self->end_list;
+	}
+	$self->{list} = 0;
+	
 	$self->end_verbatim;
 	$self->end_table;
 	$self->end_quote;
-	$self->end_explan;
 	
 	my $html = join("",@$obj);
-	my $plus = 1;
-	
-	if($level < $self->{level}){ $plus = -1; }
-	if($level==$self->{level}){
-		$self->{html} .= "</li>\n";
-	}
-	while($level != $self->{level}){
-		if($plus==1){
+
+	if($level > $self->{level}){
+		while($level != $self->{level}){
 			$self->{html} .= "<ul>\n";
 			push(@{$self->{close_list}},"</ul>\n");
-		} else {
-			$self->{html} .= "</li>\n";
-			$self->{html} .= pop(@{$self->{close_list}});
+			$self->{level}++;
 		}
-		$self->{level} += $plus;
+	} elsif($level <= $self->{level}){
+		while($level-1 != $self->{level}){
+			if($self->{'list_close_'.$self->{level}} == 1){
+				$self->{html} .= "</li>\n";
+				$self->{'list_close_'.$self->{level}} = 0;
+			}
+			if($level == $self->{level}){
+				last;
+			}
+			$self->{html} .= pop(@{$self->{close_list}});
+			$self->{level}--;
+		}
 	}
 	
 	$self->{html} .= "<li>".$html;
+	$self->{'list_close_'.$level} = 1;
 }
 
 #==============================================================================
@@ -634,29 +907,39 @@ sub l_numlist {
 		$self->{para} = 0;
 	}
 	
+	if($self->{list} == 0 && $level <= $self->{level}){
+		$self->end_list;
+	}
+	$self->{list} = 1;
+	
 	$self->end_verbatim;
 	$self->end_table;
 	$self->end_quote;
-	$self->end_explan;
 	
 	my $html = join("",@$obj);
-	my $plus = 1;
 	
-	if($level < $self->{level}){ $plus = -1; }
-	if($level==$self->{level}){
-		$self->{html} .= "</li>\n";
-	}
-	while($level != $self->{level}){
-		if($plus==1){
+	if($level > $self->{level}){
+		while($level != $self->{level}){
 			$self->{html} .= "<ol>\n";
 			push(@{$self->{close_list}},"</ol>\n");
-		} else {
-			$self->{html} .= "</li>\n";
-			$self->{html} .= pop(@{$self->{close_list}});
+			$self->{level}++;
 		}
-		$self->{level} += $plus;
+	} elsif($level <= $self->{level}){
+		while($level-1 != $self->{level}){
+			if($self->{'list_close_'.$self->{level}} == 1){
+				$self->{html} .= "</li>\n";
+				$self->{'list_close_'.$self->{level}} = 0;
+			}
+			if($level == $self->{level}){
+				last;
+			}
+			$self->{html} .= pop(@{$self->{close_list}});
+			$self->{level}--;
+		}
 	}
+	
 	$self->{html} .= "<li>".$html;
+	$self->{'list_close_'.$level} = 1;
 }
 
 #==============================================================================
@@ -664,12 +947,13 @@ sub l_numlist {
 #==============================================================================
 sub end_list {
 	my $self  = shift;
-	if ($self->{level}!=0) {
-		$self->{html} .= "</li>\n";
-		while($self->{level}!=0){
-			$self->{html} .= pop(@{$self->{close_list}});
-			$self->{level} += -1;
+	while($self->{level} != 0){
+		if($self->{'list_close_'.($self->{level})} == 1){
+			$self->{html} .= "</li>\n";
+			$self->{'list_close_'.$self->{level}} = 0;
 		}
+		$self->{html} .= pop(@{$self->{close_list}});
+		$self->{level}--;
 	}
 }
 
@@ -690,20 +974,20 @@ sub l_headline {
 	$self->end_verbatim;
 	$self->end_table;
 	$self->end_quote;
-	$self->end_explan;
 	
 	my $html  = join("",@$obj);
 	
+	# メインの表示領域でないとき
 	if(!$self->{main}){
 		$self->{html} .= "<h".($level+1).">".$html."</h".($level+1).">\n";
+
+	# メインの表示領域の場合はアンカを出力
 	} else {
 		if($level==2){
-			$self->{html} .= "<h".($level+1)."><a name=\"p".$self->{p_cnt}."\">".
-			                 "<span class=\"sanchor\">_</span></a>".$html."</h".($level+1).">\n";
+			$self->{html} .= "<h".($level+1)."><a name=\"p".$self->{p_cnt}."\"><span class=\"sanchor\">&nbsp;</span>".
+			                 $html."</a></h".($level+1).">\n";
 		} else {
-			$self->{html} .= "<h".($level+1).">".
-			                 "<a name=\"p".$self->{p_cnt}."\">".$html."</a>".
-			                 "</h".($level+1).">\n";
+			$self->{html} .= "<h".($level+1)."><a name=\"p".$self->{p_cnt}."\">".$html."</a></h".($level+1).">\n";
 		}
 	}
 	$self->{p_cnt}++;
@@ -715,11 +999,15 @@ sub l_headline {
 sub l_line {
 	my $self = shift;
 	
+	if($self->{para}==1){
+		$self->{html} .= "</p>\n";
+		$self->{para} = 0;
+	}
+	
 	$self->end_list;
 	$self->end_verbatim;
 	$self->end_table;
 	$self->end_quote;
-	$self->end_explan;
 	
 	$self->{html} .= "<hr>\n";
 }
@@ -734,11 +1022,12 @@ sub l_paragraph {
 	$self->end_verbatim;
 	$self->end_table;
 	$self->end_quote;
-	$self->end_explan;
 	
 	if($self->{para}==1){
 		$self->{html} .= "</p>\n";
 		$self->{para} = 0;
+	} elsif($main::BR_MODE==1){
+		$self->{html} .= "<br>\n";
 	}
 }
 
@@ -757,15 +1046,15 @@ sub l_verbatim {
 	$self->end_list;
 	$self->end_table;
 	$self->end_quote;
-	$self->end_explan;
 	
+	$text =~ s/^\s//;
 	$self->{pre} .= Util::escapeHTML($text)."\n";
 }
 
 sub end_verbatim {
 	my $self  = shift;
 	if($self->{pre} ne ""){
-		$self->{html} .= "<pre>".$self->{pre}."</pre>";
+		$self->{html} .= "<pre>".$self->{pre}."</pre>\n";
 		$self->{pre} = "";
 	}
 }
@@ -779,26 +1068,31 @@ sub l_table {
 	$self->end_list;
 	$self->end_verbatim;
 	$self->end_quote;
-	$self->end_explan;
+	
+	my $tag = "td";
 	
 	if($self->{table}==0){
 		$self->{table}=1;
 		$self->{html} .= "<table>\n";
-		$self->{html} .= "<tr>\n";
-		foreach(@$row){
-			my $html = join("",@$_);
-			$self->{html} .= "<th>".$html."</th>\n";
-		}
-		$self->{html} .= "</tr>\n";
+		$tag = "th";
 	} else {
 		$self->{table}=2;
-		$self->{html} .= "<tr>\n";
-		foreach(@$row){
-			my $html = join("",@$_);
-			$self->{html} .= "<td>".$html."</td>\n";
-		}
-		$self->{html} .= "</tr>\n";
 	}
+	
+	my @columns = ();
+	foreach(@$row){
+		my $html = join("",@$_);
+		if($#columns != -1 && $html eq '&lt;&lt;'){
+			@columns[$#columns]->{colspan}++;
+		} else {
+			push(@columns, {colspan => 1, html => $html});
+		}
+	}
+	$self->{html} .= "<tr>\n";
+	foreach(@columns){
+		$self->{html} .= "<$tag colspan=\"".$_->{colspan}."\">".$_->{html}."</$tag>\n";
+	}
+	$self->{html} .= "</tr>\n";
 }
 
 sub end_table {
@@ -818,7 +1112,6 @@ sub end_parse {
 	$self->end_verbatim;
 	$self->end_table;
 	$self->end_quote;
-	$self->end_explan;
 	
 	if($self->{para}==1){
 		$self->{html} .= "</p>\n";
@@ -836,7 +1129,6 @@ sub l_text {
 	$self->end_verbatim;
 	$self->end_table;
 	$self->end_quote;
-	$self->end_explan;
 	my $html = join("",@$obj);
 	
 	if($self->{para}==0){
@@ -844,6 +1136,11 @@ sub l_text {
 		$self->{para} = 1;
 	}
 	$self->{html} .= $html;
+	
+	# brモードに設定されている場合は<br>を足す
+	if($main::BR_MODE==1){
+		$self->{html} .= "<br>\n";
+	}
 }
 
 #==============================================================================
@@ -855,7 +1152,6 @@ sub l_quotation {
 	$self->end_list;
 	$self->end_verbatim;
 	$self->end_table;
-	$self->end_explan;
 	my $html = join("",@$obj);
 	$self->{quote} .= "<p>".$html."</p>\n";
 }
@@ -876,33 +1172,15 @@ sub l_explanation {
 	my $obj1 = shift;
 	my $obj2 = shift;
 	
-	if($self->{para}==1){
-		$self->{html} .= "</p>";
-		$self->{para} = 0;
-	}
-
 	$self->end_list;
 	$self->end_verbatim;
 	$self->end_table;
 	$self->end_quote;
 	
-	if($self->{explan}==0){
-		$self->{explan}=1;
-		$self->{html} .= "<dl>\n";
-	}
-	
 	my $html1 = join("",@$obj1);
 	my $html2 = join("",@$obj2);
 	
-	$self->{html} .= "<dt>".$html1."</dt>\n<dd>".$html2."</dd>\n";
-}
-
-sub end_explan {
-	my $self = shift;
-	if($self->{explan}!=0){
-		$self->{explan} = 0;
-		$self->{html} .= "</dl>\n";
-	}
+	$self->{html} .= "<dl>\n<dt>".$html1."</dt>\n<dd>".$html2."</dd>\n</dl>\n";
 }
 
 #==============================================================================
@@ -953,7 +1231,7 @@ sub url_anchor {
 		$name = $url;
 	}
 	
-	if($url eq $name && $url=~/\.(gif|jpg|jpeg|bmp|png)$/i){
+	if($url eq $name && $url=~/\.(gif|jpg|jpeg|bmp|png)$/i && $main::DISPLAY_IMAGE==1){
 		return "<img src=\"".$url."\">";
 	} else {
 		return "<a href=\"$url\">".Util::escapeHTML($name)."</a>";
@@ -968,16 +1246,36 @@ sub wiki_anchor {
 	my $page = shift;
 	my $name = shift;
 	
+	my $anchor = undef;
+	my $ppage = $page;
+	
 	if(!defined($name) || $name eq ""){
 		$name = $page;
 	}
 	
-	if(&Wiki::exists_page($page)){
-		return "<a href=\"$main::MAIN_SCRIPT?p=".&Util::url_encode($page)."\" class=\"wikipage\">".
+	if(&Wiki::page_exists($page)){
+		#アンカーを含むページが存在する場合はリンクを優先
+		return "<a href=\"".&Wiki::create_page_url($page)."\" class=\"wikipage\">".
 		       &Util::escapeHTML($name)."</a>";
 	} else {
-		return "<span class=\"nopage\">".&Util::escapeHTML($name)."</span>".
-		       "<a href=\"$main::MAIN_SCRIPT?p=".&Util::url_encode($page)."\">?</a>";
+		#最後の"#"以降をアンカーとする
+		if($page =~ m/#([^#]+)$/) {
+			$page = $`;
+			$anchor = $1;
+		}
+		if(defined($anchor) && $page eq '') {
+			#同一ページのアンカーリンク
+			return "<a href=\"#$anchor\" class=\"wikipage\">".
+			       &Util::escapeHTML($name)."</a>";
+		} elsif(&Wiki::page_exists($page)) {
+			#指定ページのアンカーリンク
+			return "<a href=\"".&Wiki::create_page_url($page).(defined($anchor)?"#".$anchor:"")."\" class=\"wikipage\">".
+			       &Util::escapeHTML($name)."</a>";
+		} else {
+			#新規ページ作成用リンク
+			return "<span class=\"nopage\">".&Util::escapeHTML($name)."</span>".
+			       "<a href=\"".&Wiki::create_page_url($page)."\">?</a>";
+		}
 	}
 }
 
@@ -997,7 +1295,7 @@ sub plugin {
 	my $self   = shift;
 	my $plugin = shift;
 	
-	my $func_ref = $main::I_PLUGIN->{$plugin->{command}};
+	my $func_ref = &Wiki::get_plugin_info($plugin->{command})->{FUNCTION};
 	my $result = &$func_ref(@{$plugin->{args}});
 	if(defined($result) && $result ne ""){
 		return ($result);
@@ -1022,9 +1320,8 @@ sub l_plugin {
 	$self->end_verbatim;
 	$self->end_table;
 	$self->end_quote;
-	$self->end_explan;
 	
-	my $func_ref = $main::P_PLUGIN->{$plugin->{command}};
+	my $func_ref = &Wiki::get_plugin_info($plugin->{command})->{FUNCTION};
 	my $result = &$func_ref(@{$plugin->{args}});
 	if(defined($result) && $result ne ""){
 		$self->{html} .= $result;
@@ -1035,13 +1332,14 @@ sub l_plugin {
 # イメージ
 #==============================================================================
 sub l_image {
-	my $self = shift;
-	my $page = shift;
-	my $file = shift;
-	my $wiki = $self->{wiki};
+	my $self   = shift;
+	my $page   = shift;
+	my $file   = shift;
+	my $width  = shift;
+	my $height = shift;
 	
 	if($self->{para}==1){
-		$self->{html} .= "</p>";
+		$self->{html} .= "</p>\n";
 		$self->{para} = 0;
 	}
 	
@@ -1049,12 +1347,24 @@ sub l_image {
 	$self->end_verbatim;
 	$self->end_table;
 	$self->end_quote;
-	$self->end_explan;
 	
-	$self->{html} .= "<img src=\"".$wiki->config('script_name')."?action=ATTACH&amp;".
-	                 "page=".&Util::url_encode($page)."&amp;file=".&Util::url_encode($file)."\">";
+	$self->{html} .= "<div class=\"image\">";
+	$self->{html} .= "<img src=\"".&Wiki::create_url({'p'=>$page,'f'=>$file},$main::DOWNLOAD_SCRIPT)."\"";
+	$self->{html} .= " width=\"$width\"" if ($width ne "");
+	$self->{html} .= " height=\"$height\"" if ($height ne "");
+	$self->{html} .= "/>";
+	$self->{html} .= "</div>\n";
 }
 
+#==============================================================================
+# エラーメッセージ
+#==============================================================================
+sub error {
+	my $self  = shift;
+	my $label = shift;
+	
+	return "<span class=\"error\">".Util::escapeHTML($label)."</span>";
+}
 
 ################################################################################
 #
@@ -1067,6 +1377,8 @@ package Util;
 #===============================================================================
 sub url_encode {
 	my $retstr = shift;
+	&jcode::convert(\$retstr,"euc");
+	
 	$retstr =~ s/([^ 0-9A-Za-z])/sprintf("%%%.2X", ord($1))/eg;
 	$retstr =~ tr/ /+/;
 	return $retstr;
@@ -1077,6 +1389,7 @@ sub url_encode {
 #===============================================================================
 sub url_decode{
 	my $retstr = shift;
+	
 	$retstr =~ tr/+/ /;
 	$retstr =~ s/%([A-Fa-f0-9]{2})/pack("c",hex($1))/ge;
 	return $retstr;
@@ -1087,6 +1400,8 @@ sub url_decode{
 #===============================================================================
 sub escapeHTML {
 	my($retstr) = shift;
+	&jcode::convert(\$retstr,"euc");
+	
 	my %table = (
 		'&' => '&amp;',
 		'"' => '&quot;',
@@ -1094,6 +1409,9 @@ sub escapeHTML {
 		'>' => '&gt;',
 	);
 	$retstr =~ s/([&\"<>])/$table{$1}/go;
+	$retstr =~ s/&amp;#([0-9]{1,5});/&#$1;/go;
+	$retstr =~ s/&#(0*(0|9|10|13|38|60|62));/&amp;#$1;/g;
+#	$retstr =~ s/&amp;([a-zA-Z0-9]{2,8});/&$1;/go;
 	return $retstr;
 }
 
@@ -1132,6 +1450,25 @@ sub delete_tag {
 }
 
 #===============================================================================
+# ページ名が使用可能かどうかチェックします。
+#===============================================================================
+sub check_pagename {
+	my $pagename = shift;
+
+	#ページ名をチェック
+	if( !defined($pagename)
+		|| $pagename eq ""                     # 空
+		|| $pagename =~ /[\|\[\]]/             # |[]
+		|| $pagename =~ /^:/                   # コロンで始まる
+		|| $pagename =~ /[^:]:[^:]/            # コロン単体での使用
+		|| $pagename =~ /^\s+$/                # 空白のみ
+	){
+		return 0;
+	}
+	return 1;
+}
+
+#===============================================================================
 # 数値かどうかチェックします。
 #===============================================================================
 sub check_numeric {
@@ -1141,6 +1478,63 @@ sub check_numeric {
 	} else {
 		return 0;
 	}
+}
+
+#==============================================================================
+# メール送信
+#==============================================================================
+sub send_mail {
+	my $action   = shift;
+	my $page     = shift;
+	my $enc_page = &Util::url_encode($page);
+	
+	if($main::ADMIN_MAIL eq "" || $main::SEND_MAIL eq ""){
+		return;
+	}
+	
+	my $subject = "";
+	if($action eq 'CREATE'){
+		$subject = "[FSWikiLite]$pageが作成されました";
+		
+	} elsif($action eq 'MODIFY'){
+		$subject = "[FSWikiLite]$pageが更新されました";
+		
+	} elsif($action eq 'DELETE'){
+		$subject = "[FSWikiLite]$pageが削除されました";
+	}
+	
+	# MIMEエンコード
+	$subject = &main::mimeencode($subject);
+	
+	my $head = "Subject: $subject\n".
+	           "From: $main::ADMIN_MAIL\n".
+	           "Content-Transfer-Encoding: 7bit\n".
+	           "Content-Type: text/plain; charset=\"ISO-2022-JP\"\n".
+	           "Reply-To: $main::ADMIN_MAIL\n".
+	           "\n";
+	
+	my $body = "IP:".$ENV{'REMOTE_ADDR'}."\n".
+	           "UA:".$ENV{'HTTP_USER_AGENT'}."\n";
+	
+	if($action eq 'MODIFY' || $action eq 'DELETE'){
+		if(-e "$main::BACKUP_DIR/$enc_page.bak"){
+			$body .= "以下は変更前のソースです。\n".
+			         "-----------------------------------------------------\n";
+			open(BACKUP,"$main::BACKUP_DIR/$enc_page.bak");
+			while(my $line = <BACKUP>){
+				$body .= $line;
+			}
+			close(BACKUP);
+		}
+	}
+	
+	# 文字コードの変換(jcode.plを使用する)
+	&jcode::convert(\$body,'jis');
+	
+	open(MAIL,"| $main::SEND_MAIL $main::ADMIN_MAIL");
+	print MAIL $head;
+	print MAIL $body;
+	close(MAIL);
 }
 
 #===============================================================================
@@ -1170,7 +1564,7 @@ sub handyphone {
 	if(!defined($ua)){
 		return 0;
 	}
-	if($ua=~/^DoCoMo\// || $ua=~ /^J-PHONE\// || $ua=~ /UP\.Browser/){
+	if($ua=~/^DoCoMo\// || $ua=~ /^J-PHONE\// || $ua=~ /UP\.Browser/ || $ua=~ /\(DDIPOCKET\;/ || $ua=~ /\(WILLCOM\;/ || $ua=~ /^Vodafone\// || $ua=~ /^SoftBank\//){
 		return 1;
 	} else {
 		return 0;
@@ -1178,59 +1572,18 @@ sub handyphone {
 }
 
 #===============================================================================
-# インラインプラグインをパースしてコマンドと引数に分割
+# スマートフォンかどうかチェックします。
 #===============================================================================
-sub parse_plugin {
-	my $text = shift;
-	my ($cmd,@args_tmp) = split(/ /,$text);
-	my $args_txt = &Util::trim(join(" ",@args_tmp));
-	
-	my @ret_args;
-	my $tmp    = "";
-	my $escape = 0;
-	my $quote  = 0;
-	
-	for(my $i=0;$i<length($args_txt);$i++){
-		my $c = substr($args_txt,$i,1);
-		
-		if($quote!=1 && $c eq ","){
-			if($tmp ne ""){
-				push(@ret_args,$tmp);
-				$tmp = "";
-				$quote = 0;
-			}
-		} elsif($quote==1 && $c eq "\\"){
-			if($escape==0){
-				$escape = 1;
-			} else {
-				$tmp .= $c;
-				$escape = 0;
-			}
-		} elsif($quote==0 && $c eq '"'){
-			if($tmp eq ""){
-				$quote = 1;
-			} else {
-				$tmp .= $c;
-			}
-		} elsif($quote==1 && $c eq '"'){
-			if($escape==1){
-				$tmp .= $c;
-				$escape = 0;
-			} else {
-				$quote = 2;
-			}
-		} elsif($quote==2){
-			return {error=>"インラインプラグインの構文が不正です。"};
-		} else {
-			$tmp .= $c;
-		}
+sub smartphone {
+	my $ua = $ENV{'HTTP_USER_AGENT'};
+	if(!defined($ua)){
+		return 0;
 	}
-	
-	if($tmp ne ""){
-		push(@ret_args,$tmp);
+	if($ua =~ /Android/ || $ua =~ /iPhone/){
+		return 1;
+	} else {
+		return 0;
 	}
-	
-	return {command=>$cmd,args=>\@ret_args};
 }
 
 1;

@@ -33,7 +33,7 @@ sub list_page {
 	&print_header("一覧");
 	print "<ul>\n";
 	foreach my $page (@pages){
-		print "<li><a href=\"$MAIN_SCRIPT?p=".&Util::url_encode($page->{NAME})."\">".
+		print "<li><a href=\"".&Wiki::create_page_url($page->{NAME})."\">".
 		      &Util::escapeHTML($page->{NAME})."</a>".
 		      " - ".&Util::format_date($page->{TIME})."</li>\n";
 	}
@@ -46,7 +46,7 @@ sub list_page {
 #-------------------------------------------------------------------------------
 sub show_page {
 	
-	unless(&Wiki::exists_page($in{"p"})){
+	unless(&Wiki::page_exists($in{"p"})){
 		undef %in;
 		$in{"a"} = "edit";
 		require $EDIT_SCRIPT;
@@ -58,7 +58,7 @@ sub show_page {
 	
 	&print_header($in{"p"},1);
 	
-	if(&Wiki::exists_page("Header")){
+	if(&Wiki::page_exists("Header")){
 		print "<div class=\"header\">\n";
 		print &Wiki::process_wiki(&Wiki::get_page("Header"));
 		print "</div>\n";
@@ -68,7 +68,7 @@ sub show_page {
 	print $html;
 	print "</div>\n";
 	
-	if(&Wiki::exists_page("Footer")){
+	if(&Wiki::page_exists("Footer")){
 		print "<div class=\"comment\">\n";
 		print &Wiki::process_wiki(&Wiki::get_page("Footer"));
 		print "</div>\n";
@@ -83,29 +83,85 @@ sub show_page {
 sub search_page {
 	
 	&print_header("検索");
-	print "<form action=\"$MAIN_SCRIPT\" method=\"GET\">\n";
-	print "  キーワード <input type=\"text\" name=\"w\" size=\"20\" value=\"".&Util::escapeHTML($in{'w'})."\">\n";
-	print "  <input type=\"submit\" value=\" 検 索 \">\n";
-	print "  <input type=\"hidden\" name=\"a\" value=\"search\">\n";
-	print "</form>\n";
+	print &Wiki::Plugin::search();
 	
-	if($in{'w'} ne ""){
-		my @pages = &Wiki::get_page_list();
-		my $find  = 0;
-		print "<ul>\n";
-		foreach my $page (@pages){
-			my $source = $page->{NAME}."\n".&Wiki::get_page($page->{NAME});
-			if(index($source,$in{'w'})!=-1){
-				print "  <li><a href=\"$MAIN_SCRIPT?p=".&Util::url_encode($page->{NAME})."\">".&Util::escapeHTML($page->{NAME})."</a></li>\n";
-				$find = 1;
+	my $buf          = "";
+	my $or_search    = $in{'t'} eq 'or';
+	my $with_content = $in{'c'} eq 'true';
+	my $word = &Util::trim($in{'w'});
+	
+	my $ignore_case = 1;
+	my $conv_upper_case = ($ignore_case and $word =~ /[A-Za-z]/);
+	
+	$word = uc $word if ($conv_upper_case);
+	my @words = grep { $_ ne '' } split(/ +|　+/, $word);
+	if (@words) {
+	#---------------------------------------------------------------------------
+	# 検索実行
+	my @list = &Wiki::get_page_list();
+	my $res = '';
+	PAGE:
+	foreach my $page (@list){
+		my $name = $page->{NAME};
+		# ページ名も検索対象にする
+		my $page = $name;
+		$page .= "\n".&Wiki::get_page($name) if ($with_content);
+		my $pageref = ($conv_upper_case) ? \(my $page2 = uc $page) : \$page;
+		my $index;
+
+		if ($or_search) {
+			# OR検索 -------------------------------------------------------
+			WORD:
+			foreach(@words){
+				next WORD if (($index = index $$pageref, $_) == -1);
+				$res .= "<li>".
+					    "<a href=\"".&Wiki::create_page_url($name)."\">".&Util::escapeHTML($name)."</a>".
+						" - ".
+						&Util::escapeHTML(&get_match_content($page, $index)).
+						"</li>\n";
+				next PAGE;
 			}
+		} else {
+			# AND検索 ------------------------------------------------------
+			WORD:
+			foreach(@words){
+				next PAGE if (($index = index $$pageref, $_) == -1);
+			}
+			$res .= "<li>".
+					"<a href=\"".&Wiki::create_page_url($name)."\">".Util::escapeHTML($name)."</a>".
+					" - ".
+					Util::escapeHTML(&get_match_content($page, $index)).
+					"</li>\n";
 		}
-		if($find==0){
-			print "<li>該当するページは存在しません。</li>\n";
-		}
-		print "</ul>\n";
+	}
+	print "$buf<ul>\n$res</ul>\n" if ($res ne '');
 	}
 	
 	&print_footer();
+}
+
+#-------------------------------------------------------------------------------
+# 検索にマッチした行を取り出す関数
+#-------------------------------------------------------------------------------
+sub get_match_content {
+	my $content = shift;
+	my $index   = shift;
+
+	# 検索にマッチした行の先頭文字の位置を求める。
+	# ・$content の $index 番目の文字から先頭方向に改行文字を探す。
+	# ・$index の位置を含む行の先頭文字の位置は改行文字の次なので +1 する。
+	# ・先頭方向に改行文字が無かったら最初の行なので、結果は 0(先頭)。
+	#   (見つからないと rindex() = -1 になるので、+1 してちょうど 0)
+	my $pre_index = rindex($content, "\n", $index) + 1;
+
+	# 検索にマッチした行の末尾文字の位置を求める。
+	# ・$content の $index 番目の文字から末尾方向に改行文字を探す。
+	my $post_index = index($content, "\n", $index);
+
+	# 末尾方向に改行文字がなかったら最終行なので $pre_index 以降全てを返却。
+	return substr($content, $pre_index) if ($post_index == -1);
+
+	# 見つかった改行文字に挟まれた文字列を返却。
+	return substr($content, $pre_index, $post_index - $pre_index);
 }
 
