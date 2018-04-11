@@ -1,0 +1,12 @@
+{{search v}}
+
+!!!メニュー
+*[[トップ|FrontPage]]
+*[[ヘルプ|Help]]
+*[[プラグイン|PluginHelp]]
+
+*[FSWikiLiteとは？|./docs/readme.html]
+*[プラグイン開発|./docs/plugindev.html]
+
+!!!最新
+{{recentdays 10}}
