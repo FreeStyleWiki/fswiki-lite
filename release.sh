@@ -46,9 +46,11 @@ mkdir $RELEASE
 #=========================================================================
 echo "copy to temp directory..."
 cp ./*.cgi $RELEASE
+cp -r ./data $RELEASE
 cp -r ./docs $RELEASE
 cp -r ./lib $RELEASE
 cp -r ./plugin $RELEASE
+cp -r ./theme $RELEASE
 
 #=========================================================================
 # zipファイルの作成
