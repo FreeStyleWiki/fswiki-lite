@@ -61,17 +61,17 @@ sub print_footer {
 # 旧Ver(0.0.11)互換性維持
 # 次期バージョンで削除されます。
 #-------------------------------------------------------------------------------
-sub redirect { return &Wiki::redirect($@); }
-sub redirectURL { return &Wiki::redirectURL($@); }
+sub redirect { return &Wiki::redirect(@_); }
+sub redirectURL { return &Wiki::redirectURL(@_); }
 
 package Wiki;
 sub exists_page { return &page_exists(shift); }
-sub send_mail { return &Util::send_mail($@); }
+sub send_mail { return &Util::send_mail(@_); }
 
 package HTMLParser;
 
 package Util;
-sub parse_plugin { return &Wiki::parse_inline_plugin($@); }
+sub parse_plugin { return &Wiki::parse_inline_plugin(@_); }
 
 ###############################################################################
 #
